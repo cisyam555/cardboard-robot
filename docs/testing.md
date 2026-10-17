@@ -18,6 +18,7 @@
 | 安装前 | `examples/10_机械组装/servo_center.py` | 两舵机依次回中，断电后装舵盘 |
 | 11 | `examples/11_视频转头/robot_video_turn.py` | 单文件 demo / interaction，平滑运动 |
 | 12 | `firmware/main.py` 及所有模块 | 当前正式模块版本 |
+| 13 | `examples/12_双轴柔和转头/head_turn_demo.py` | GPIO5 左右、GPIO6 上下及双轴联动 |
 
 触摸输入没有单独的旧测试脚本，可在第 6 步验证其输出。旧例子可能包含阻塞等待、不同保持策略；正式程序的行为以 README 为准。
 
