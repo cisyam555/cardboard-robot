@@ -28,6 +28,8 @@ from config import (
     TILT_PIN,
     TILT_RANGE_NS,
     TOUCH_PIN,
+    REMOTE_TIMEOUT_MS,
+    TELEMETRY_INTERVAL_MS,
 )
 
 def move_and_wait(pan, tilt, pan_target, tilt_target):
@@ -76,16 +78,36 @@ def run_interaction(pan, tilt):
     left_ir = StableInput(LEFT_IR_PIN, IR_ACTIVE_LEVEL, pull_up=True)
     right_ir = StableInput(RIGHT_IR_PIN, IR_ACTIVE_LEVEL, pull_up=True)
 
+    from remote import ModeController, USBLink
+    controller = ModeController(REMOTE_TIMEOUT_MS)
+    link = USBLink()
+    last_report = time.ticks_ms()
+    print("互动开始：左红外转左，右红外转右，摸头低头。")
+
+    try:
+        _interaction_loop(pan, tilt, oled, touch, left_ir, right_ir,
+                          controller, link, last_report)
+    finally:
+        link.close()
+
+
+def _interaction_loop(pan, tilt, oled, touch, left_ir, right_ir,
+                      controller, link, last_report):
     last_seen_at = None
     last_near_target = CENTER_NS
     last_blink = time.ticks_ms()
     blink_until = None
     shown = None
-    previous_inputs = None
-    print("互动开始：左红外转左，右红外转右，摸头低头。")
-
+    previous_mode = "standalone"
     while True:
         now = time.ticks_ms()
+        for line in link.read_lines():
+            controller.receive(line, now)
+        centered = (pan.current == CENTER_NS and tilt.current == CENTER_NS)
+        mode = controller.update(now, centered)
+        if mode != previous_mode:
+            last_seen_at = None
+            previous_mode = mode
         touched = touch.read(now)
         left = left_ir.read(now)
         right = right_ir.read(now)
@@ -99,6 +121,16 @@ def run_interaction(pan, tilt):
             if time.ticks_diff(now, last_seen_at) < RETURN_DELAY_MS:
                 expression = "near"
                 pan_target = last_near_target
+
+        if mode == "centering":
+            expression, pan_target, tilt_target = "normal", CENTER_NS, CENTER_NS
+        elif mode == "ros2":
+            action = controller.action
+            expression = "touched" if action == "bow" else (
+                "normal" if action == "idle" else "near")
+            pan_target = (PAN_LEFT_NS if action == "look_left" else
+                          PAN_RIGHT_NS if action == "look_right" else CENTER_NS)
+            tilt_target = TILT_DOWN_NS if action == "bow" else CENTER_NS
 
         # 每次循环只向目标走一小步，不用 sleep(1) 等待整个动作做完。
         # 因此向左转到一半时，右边检测到手，也能及时修改目标。
@@ -121,22 +153,22 @@ def run_interaction(pan, tilt):
             last_blink = now
 
         # I2C 刷屏也会占时间，只在表情改变时画，避免拖慢舵机更新。
-        if expression != shown:
-            draw_face(oled, expression)
-            shown = expression
+        display = (expression, mode)
+        if display != shown:
+            draw_face(oled, expression, mode)
+            shown = display
 
-        inputs = (touched, left, right)
-        if inputs != previous_inputs:
-            print("触摸:", int(touched), "左红外:", int(left),
-                  "右红外:", int(right))
-            previous_inputs = inputs
+        if time.ticks_diff(now, last_report) >= TELEMETRY_INTERVAL_MS:
+            link.send({"v": 1, "touch": touched, "left": left, "right": right,
+                       "mode": mode})
+            last_report = now
         time.sleep_ms(5)
 
 
 
 def main():
-    if MODE not in ("demo", "interaction"):
-        raise ValueError('MODE 只能填 "demo" 或 "interaction"')
+    if MODE not in ("demo", "interaction", "standalone"):
+        raise ValueError('MODE 只能填 "demo"、"interaction" 或 "standalone"')
     if PAN_DIRECTION not in (-1, 1) or TILT_DIRECTION not in (-1, 1):
         raise ValueError("方向只能填 1 或 -1")
     if not (0 < PAN_RANGE_NS <= 100000 and 0 < TILT_RANGE_NS <= 100000):

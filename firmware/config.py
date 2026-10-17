@@ -1,8 +1,9 @@
 """硬件接线和动作参数；改动后重启程序生效。"""
 
 # demo：不用屏幕和传感器，自动演示一次，随后保持中位，等待你按停止。
-# interaction：左右红外控制转头，触摸控制低头，屏幕显示之前选好的表情。
-MODE = "demo"
+# standalone：上电独立互动，并监听 USB 上的 ROS2 模式命令。
+# interaction 保留为 standalone 的兼容名称。demo 仍可用于空载演示。
+MODE = "standalone"
 
 PAN_PIN = 5                  # 第一只舵机的信号线：负责左右转头。
 TILT_PIN = 6                 # 第二只舵机的信号线：负责低头、抬回。
@@ -41,3 +42,7 @@ OLED_SDA_PIN = 0
 OLED_SCL_PIN = 1
 OLED_FREQ = 100000
 OLED_ADDRESS = 0x3C
+
+# ROS2 无按钮切换：仅有效命令续期；断线先回中，再恢复独立互动。
+REMOTE_TIMEOUT_MS = 1000
+TELEMETRY_INTERVAL_MS = 100

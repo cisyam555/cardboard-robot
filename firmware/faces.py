@@ -67,7 +67,7 @@ def draw_near_face(oled):
 
 
 
-def draw_face(oled, expression):
+def draw_face(oled, expression, mode=None):
     oled.fill(0)
     if expression == "touched":
         draw_touch_face(oled)
@@ -80,5 +80,8 @@ def draw_face(oled, expression):
         rounded_eye(oled, 76, y, 24, height)
         mouth = ((55, 48), (59, 50), (64, 51), (69, 50), (73, 48))
         thick_line(oled, mouth)
+    if mode is not None:
+        label = {"standalone": "LOCAL", "centering": "WAIT", "ros2": "ROS2"}[mode]
+        oled.text(label, 0, 0, 1)
     oled.show()
 
