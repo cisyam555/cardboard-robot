@@ -14,3 +14,10 @@ Thumbs.db
 *.bin
 *.rar
 *.zip
+
+# ROS2 build artifacts and recorded data
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+*.db3
+*.mcap
