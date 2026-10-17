@@ -2,7 +2,7 @@
 
 基于 **ESP32-C3 SuperMini + MicroPython** 的桌面互动机器人。使用 OLED 表情、双红外检测、触摸输入和两只 SG90 舵机，实现平滑转头与摸头低头。
 
-本项目记录从单模块测试到完整联动的开发过程。正式程序由最新学习版本拆分而来，默认使用小幅动作演示模式；尚未在实物上验证拆分后的版本。
+本项目记录从单模块测试到完整联动的开发过程。正式程序由最新学习版本拆分而来，新增无按钮双模式：上电独立互动，电脑通过 ROS2 服务请求接管。固件更新后仍需实物验证。
 
 ## 项目结构
 
@@ -10,7 +10,8 @@
 firmware/                  正式程序：上传其中所有 .py 到开发板根目录
   main.py                  上电入口
   config.py                引脚、模式、动作幅度和速度
-  app.py                   演示、互动循环及退出清理
+  app.py                   演示、双模式互动及退出清理
+  remote.py                USB 通信、模式切换和超时回退
   servo.py                 舵机 PWM 与平滑步进
   sensors.py               传感器输入消抖
   behavior.py              触摸与红外的动作优先级
@@ -27,6 +28,7 @@ examples/                  全部现有独立测试和学习脚本
   09_双红外左右联动/       左右红外方向控制
   10_机械组装/             安装前舵机回中
   11_视频转头/             正式程序拆分前的完整学习版本
+ros2_ws/src/cardboard_robot/ ROS2 桥接、决策节点和 launch
 tests/                    电脑端逻辑测试，无需连接硬件
 tools/check_syntax.py     全部 Python 源码语法检查
 docs/                     接线、模块测试、运行、上传说明
@@ -50,15 +52,37 @@ docs/                     接线、模块测试、运行、上传说明
 1. 在 ESP32-C3 上安装 MicroPython。固件请从 [MicroPython 官方下载页](https://micropython.org/download/ESP32_GENERIC_C3/) 获取；本仓库不附带固件二进制。
 2. 用 Thonny 选择 MicroPython (ESP32) 和开发板串口。
 3. 先单独运行 `examples/` 内的测试。使用 OLED 的例子均需先将 `firmware/ssd1306.py` 保存到开发板根目录。
-4. 测试通过后，将 `firmware/` 内的 **全部 8 个 .py 文件** 平铺保存到开发板根目录，不是只复制 `main.py`。
-5. `config.py` 默认 `MODE = "demo"`：两只舵机依次回中，执行一次小幅演示，随后保持中位。先空载测试。
-6. 验证方向后，停止程序，把开发板上的 `config.py` 改为 `MODE = "interaction"`，重启开发板。
+4. 测试通过后，将 `firmware/` 内的 **全部 9 个 .py 文件** 平铺保存到开发板根目录，不是只复制 `main.py`。
+5. `config.py` 默认 `MODE = "standalone"`：上电独立互动。第一次调试先改为 `"demo"` 做空载小幅演示，再恢复 `"standalone"`。
+6. 验证方向后，停止程序，把开发板上的 `config.py` 改为 `MODE = "standalone"`，重启开发板。
 
 互动模式：左红外触发转左，右红外触发转右，同时触发回中；手移开约 0.4 秒后回中；摸头优先回中并低头。空闲时屏幕眨眼。左右反了改 `PAN_DIRECTION`；低头方向反了改 `TILT_DIRECTION`。
 
 `main.py` 保存到设备后会在重启时自动运行。第一次调试可暂不保存它，上传其余文件后，在 Thonny 打开电脑上的 `firmware/main.py` 按 F5。修改配置或模块后重启，避免使用导入缓存。
 
 动作范围默认 1.4～1.6ms，50Hz PWM。脉宽不等于角度，SG90 没有位置反馈。停止程序后会释放舵机，应先扶住头壳。扩大范围前需要机械校准。
+
+## ROS2 无按钮切换
+
+不加按钮、不需要每次重传代码。电脑启动桥接和决策节点后，通过服务切换：
+
+```bash
+# 在已构建并 source 工作空间的终端中运行
+ros2 launch cardboard_robot robot.launch.py port:=/dev/ttyACM0
+```
+
+另一个已 source 的终端：
+
+```bash
+ros2 service call /robot/set_ros2 std_srvs/srv/SetBool '{data: true}'
+ros2 service call /robot/set_ros2 std_srvs/srv/SetBool '{data: false}'
+```
+
+第一条请求 ROS2 接管，第二条恢复独立互动。OLED 显示 LOCAL / WAIT / ROS2；
+切换先平滑回中，通信超时后回到独立模式。连接前关闭 Thonny。
+设备名按实际修改，启动桥接本身不会接管。没有硬件可用 `simulate:=true` 学习话题。
+
+完整构建、模拟、实物连接、模式切换和代码讲解见 [ROS2 演示指南](docs/ros2.md)。
 
 ## 测试与开发
 

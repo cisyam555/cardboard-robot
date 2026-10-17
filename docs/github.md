@@ -15,7 +15,7 @@ git push -u origin main
 
 ```bash
 git add .
-git commit -m "Initial modular cardboard robot project"
+git commit -m "feat: 新增纸壳机器人互动固件"
 ```
 
 GitHub HTTPS 推送使用已配置的凭据管理器或 GitHub CLI 登录；不能使用账号密码代替访问令牌。也可以使用已配置的 SSH。不要把令牌直接写进 remote URL。
