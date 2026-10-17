@@ -23,6 +23,7 @@ from config import (
     RIGHT_IR_PIN,
     STEP_INTERVAL_MS,
     STEP_NS,
+    RAMP_STEP_NS,
     TILT_DIRECTION,
     TILT_DOWN_NS,
     TILT_PIN,
@@ -173,8 +174,8 @@ def main():
         raise ValueError("方向只能填 1 或 -1")
     if not (0 < PAN_RANGE_NS <= 100000 and 0 < TILT_RANGE_NS <= 100000):
         raise ValueError("先保持已测试的小范围：范围应大于 0，且不超过 100000")
-    if STEP_NS <= 0 or STEP_INTERVAL_MS <= 0:
-        raise ValueError("每步幅度和间隔必须大于 0")
+    if STEP_NS <= 0 or STEP_INTERVAL_MS <= 0 or RAMP_STEP_NS <= 0:
+        raise ValueError("每步幅度、起步增量和间隔必须大于 0")
 
     pan = None
     tilt = None

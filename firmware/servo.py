@@ -6,6 +6,7 @@ from config import (
     CENTER_NS,
     STEP_INTERVAL_MS,
     STEP_NS,
+    RAMP_STEP_NS,
 )
 
 class SmoothServo:
@@ -17,6 +18,8 @@ class SmoothServo:
         self.current = CENTER_NS
         self.target = CENTER_NS
         self.next_step = time.ticks_ms()
+        self.step = 0
+        self.direction = 0
         self.pwm = None
         self.pin = Pin(pin_number, Pin.OUT, value=0)
         try:
@@ -43,11 +46,19 @@ class SmoothServo:
 
         remaining = self.target - self.current
         if remaining == 0:
+            self.step = 0
+            self.direction = 0
             return
-        if remaining > 0:
-            self.current += min(STEP_NS, remaining)
-        else:
-            self.current -= min(STEP_NS, -remaining)
+        direction = 1 if remaining > 0 else -1
+        if direction != self.direction:
+            # 中途改变方向时，从小步幅重新起动。
+            self.step = 0
+        self.direction = direction
+        # 起动逐渐增加步幅；接近目标时逐渐减小步幅。
+        # 至少走一个 ramp 步长，最后一步精确到目标，避免无限接近。
+        desired = min(STEP_NS, max(RAMP_STEP_NS, abs(remaining) // 4))
+        self.step = min(desired, self.step + RAMP_STEP_NS)
+        self.current += direction * min(self.step, abs(remaining))
         self.pwm.duty_ns(self.current)
 
         # 旧测试程序转完就停止脉冲；挂上头壳后可能下垂。

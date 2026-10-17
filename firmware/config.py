@@ -22,9 +22,11 @@ TILT_DIRECTION = -1         # 如果本该低头却抬头，只把这里改成 1
 PAN_LEFT_NS = CENTER_NS - PAN_DIRECTION * PAN_RANGE_NS
 PAN_RIGHT_NS = CENTER_NS + PAN_DIRECTION * PAN_RANGE_NS
 TILT_DOWN_NS = CENTER_NS + TILT_DIRECTION * TILT_RANGE_NS
+TILT_UP_NS = CENTER_NS - TILT_DIRECTION * TILT_RANGE_NS
 
 STEP_INTERVAL_MS = 20        # 大约每 20 毫秒走一小步。
-STEP_NS = 4000              # 每步最多改变 4000 纳秒，100000 纳秒约需 0.5 秒。
+STEP_NS = 4000              # 每步最多改变 4000 纳秒；含柔和起停时耗时更长。
+RAMP_STEP_NS = 1000         # 每次更新最多增加的步幅，减少突然起动。
 INPUT_STABLE_MS = 60         # 输入持续 60 毫秒才承认，减少边缘检测时来回抖动。
 RETURN_DELAY_MS = 400        # 手短暂离开检测区时先等一下，再回中。
 
