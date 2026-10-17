@@ -105,14 +105,14 @@ class ControlTests(unittest.TestCase):
             motor.set_target(9999999)
             self.assertEqual(motor.target, 1600000)
             motor.update(0)
-            self.assertEqual(motor.current, 1504000)
+            self.assertEqual(motor.current, 1501000)
             motor.update(19)
-            self.assertEqual(motor.current, 1504000)
-            for now in range(20, 501, 20):
+            self.assertEqual(motor.current, 1501000)
+            for now in range(20, 801, 20):
                 motor.update(now)
             self.assertEqual(motor.current, 1600000)
             motor.set_target(1599000)
-            motor.update(520)
+            motor.update(820)
             self.assertEqual(motor.current, 1599000)
             motor.set_target(-1)
             self.assertEqual(motor.target, 1400000)
@@ -126,11 +126,35 @@ class ControlTests(unittest.TestCase):
             motor.set_target(1600000)
             motor.next_step = 1010
             motor.update(1010)
-            self.assertEqual(motor.current, 1504000)
+            self.assertEqual(motor.current, 1501000)
             motor.update(5)
-            self.assertEqual(motor.current, 1504000)
+            self.assertEqual(motor.current, 1501000)
             motor.update(6)
-            self.assertEqual(motor.current, 1508000)
+            self.assertEqual(motor.current, 1503000)
+            motor.close()
+
+    def test_soft_start_slow_finish_and_reverse(self):
+        with patch.object(servo, "time", clock):
+            motor = servo.SmoothServo(5, 1400000, 1600000)
+            motor.set_target(1600000)
+            positions = [motor.current]
+            for now in range(0, 801, 20):
+                motor.update(now)
+                positions.append(motor.current)
+            steps = [b-a for a, b in zip(positions, positions[1:]) if b != a]
+            self.assertEqual(steps[:4], [1000, 2000, 3000, 4000])
+            self.assertTrue(all(0 < step <= config.STEP_NS for step in steps))
+            self.assertLess(steps[-1], config.STEP_NS)
+            self.assertEqual(motor.current, 1600000)
+            motor.set_target(1400000)
+            motor.update(820)
+            self.assertEqual(motor.current, 1599000)
+            motor.update(840)
+            self.assertEqual(motor.current, 1597000)
+            # Reverse a moving servo without carrying over the previous step size.
+            motor.set_target(1600000)
+            motor.update(860)
+            self.assertEqual(motor.current, 1598000)
             motor.close()
 
     def test_constructor_failure_releases_pwm(self):
