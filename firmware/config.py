@@ -13,7 +13,7 @@ TOUCH_PIN = 10               # 触摸模块 SIG：已测到摸到是 1，松开�
 IR_ACTIVE_LEVEL = 0          # 常见避障模块检测到物体时输出 0。
 
 CENTER_NS = 1500000          # 1500000 纳秒 = 1.5 毫秒，是先前用过的中位。
-PAN_RANGE_NS = 100000        # 先沿用 1.4～1.6 毫秒的小范围，不直接大角度转。
+PAN_RANGE_NS = 300000        # 左右幅度扩大到原来的 3 倍：1.2～1.8 毫秒。
 TILT_RANGE_NS = 100000       # 低头同样先小幅试转，避免头壳撞到身体。
 PAN_DIRECTION = 1           # 如果左右反了，只把这里改成 -1。
 TILT_DIRECTION = -1         # 如果本该低头却抬头，只把这里改成 1。
@@ -24,11 +24,28 @@ PAN_RIGHT_NS = CENTER_NS + PAN_DIRECTION * PAN_RANGE_NS
 TILT_DOWN_NS = CENTER_NS + TILT_DIRECTION * TILT_RANGE_NS
 TILT_UP_NS = CENTER_NS - TILT_DIRECTION * TILT_RANGE_NS
 
+# 安装后的默认姿势：面对屏幕时略朝右、抬高头部。
+# 仅调整默认位置；左右红外目标和触摸低头目标仍沿用上面的数值。
+PAN_HOME_OFFSET_NS = 60000   # 向右偏一点；约为当前单侧转头幅度的五分之一。
+TILT_HOME_LIFT_NS = 100000   # 沿用刚才抬头测试的幅度，不超出已用范围。
+PAN_HOME_NS = CENTER_NS + PAN_DIRECTION * PAN_HOME_OFFSET_NS
+TILT_HOME_NS = CENTER_NS - TILT_DIRECTION * TILT_HOME_LIFT_NS
+
+# 红外检测到物体时，在默认姿势上再略抬头；不是角度值。
+# 新增的 20000ns 尚需检查安装间隙后实测，不能靠软件判断机械是否卡住。
+TILT_NEAR_EXTRA_NS = 20000
+TILT_NEAR_NS = TILT_HOME_NS - TILT_DIRECTION * TILT_NEAR_EXTRA_NS
+TILT_MIN_NS = min(TILT_DOWN_NS, TILT_UP_NS, TILT_NEAR_NS)
+TILT_MAX_NS = max(TILT_DOWN_NS, TILT_UP_NS, TILT_NEAR_NS)
+
 STEP_INTERVAL_MS = 20        # 大约每 20 毫秒走一小步。
 STEP_NS = 4000              # 每步最多改变 4000 纳秒；含柔和起停时耗时更长。
 RAMP_STEP_NS = 1000         # 每次更新最多增加的步幅，减少突然起动。
 INPUT_STABLE_MS = 60         # 输入持续 60 毫秒才承认，减少边缘检测时来回抖动。
 RETURN_DELAY_MS = 400        # 手短暂离开检测区时先等一下，再回中。
+TOUCH_ACTIVE_LEVEL = 1       # 已确认 TTP223：摸到是 1，松开是 0。
+TOUCH_HOLD_MS = 1000         # 轻触后继续低头/显示表情 1 秒，避免短按动作看不清。
+# 屏幕只绘制表情；输入电平和运行模式仍通过 USB 回传，不占用屏幕。
 
 # 供电沿用已经接好的方式，不需要重新接线：
 # 两只舵机红线 -> 电源板绿色 5V；棕/黑线 -> 黑色 GND。

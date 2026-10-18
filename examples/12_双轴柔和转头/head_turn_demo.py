@@ -28,8 +28,8 @@ def pose(pan, tilt, horizontal, vertical, hold_ms=500):
 def main():
     if PAN_PIN != 5 or TILT_PIN != 6:
         raise ValueError("本演示要求 config.py 中 PAN_PIN=5、TILT_PIN=6")
-    if not (0 < PAN_RANGE_NS <= 100000 and 0 < TILT_RANGE_NS <= 100000):
-        raise ValueError("先保持已经测试过的 100000ns 以内小幅动作范围")
+    if not (0 < PAN_RANGE_NS <= 400000 and 0 < TILT_RANGE_NS <= 100000):
+        raise ValueError("水平范围应在 1～400000ns；俯仰保持 1～100000ns")
     pan = None
     tilt = None
     try:

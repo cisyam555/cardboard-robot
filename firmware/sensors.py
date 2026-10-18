@@ -18,13 +18,14 @@ class StableInput:
         self.value = False
         self.candidate = False
         self.changed_at = time.ticks_ms()
+        self.raw_level = self.pin.value()
 
     def read(self, now):
-        active = self.pin.value() == self.active_level
+        self.raw_level = self.pin.value()
+        active = self.raw_level == self.active_level
         if active != self.candidate:
             self.candidate = active
             self.changed_at = now
         if time.ticks_diff(now, self.changed_at) >= INPUT_STABLE_MS:
             self.value = self.candidate
         return self.value
-

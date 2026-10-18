@@ -12,11 +12,14 @@ from config import (
 class SmoothServo:
     """用逐步改变脉宽的方式转动普通位置型 SG90。"""
 
-    def __init__(self, pin_number, minimum, maximum):
+    def __init__(self, pin_number, minimum, maximum, initial=CENTER_NS):
+        # 正式程序可为两只舵机分别指定开机位置；旧例子仍默认 1.5ms。
+        if not minimum <= initial <= maximum:
+            raise ValueError("初始位置必须在舵机允许范围内")
         self.minimum = minimum
         self.maximum = maximum
-        self.current = CENTER_NS
-        self.target = CENTER_NS
+        self.current = initial
+        self.target = initial
         self.next_step = time.ticks_ms()
         self.step = 0
         self.direction = 0
@@ -27,7 +30,7 @@ class SmoothServo:
             # 脉冲的“高电平持续多久”决定目标位置；频率不是转动速度。
             # 先创建 PWM 再设 duty_ns，避开这块板此前出现的 PWM is inactive。
             self.pwm = PWM(self.pin, freq=50, duty_u16=0)
-            self.pwm.duty_ns(CENTER_NS)
+            self.pwm.duty_ns(initial)
         except BaseException:
             # 即使构造中途报错，也要关掉已经创建的 PWM。
             self.close()
@@ -71,4 +74,3 @@ class SmoothServo:
                 self.pwm.deinit()
         finally:
             self.pin.init(Pin.OUT, value=0)
-

@@ -67,7 +67,8 @@ def draw_near_face(oled):
 
 
 
-def draw_face(oled, expression, mode=None):
+def draw_face(oled, expression):
+    """屏幕只显示表情；调试电平和模式留在 USB 串口。"""
     oled.fill(0)
     if expression == "touched":
         draw_touch_face(oled)
@@ -80,8 +81,4 @@ def draw_face(oled, expression, mode=None):
         rounded_eye(oled, 76, y, 24, height)
         mouth = ((55, 48), (59, 50), (64, 51), (69, 50), (73, 48))
         thick_line(oled, mouth)
-    if mode is not None:
-        label = {"standalone": "LOCAL", "centering": "WAIT", "ros2": "ROS2"}[mode]
-        oled.text(label, 0, 0, 1)
     oled.show()
-

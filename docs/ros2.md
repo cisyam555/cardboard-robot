@@ -22,7 +22,7 @@ SG90 的指令脉宽不是测量角度。模拟模式仅验证消息链路，不
 2. 用 Thonny 把 `firmware/` 中全部 **9 个 .py 文件**上传到开发板根目录。
 3. `config.py` 默认 `MODE = "standalone"`。第一次空载检查可先用 `"demo"`；
    确认方向后再改回 `"standalone"`。`"interaction"` 是独立互动的兼容名称。
-4. 重启后默认独立互动，OLED 左上角 `LOCAL`。不接电脑、只供电也可使用。
+4. 重启后默认独立互动；OLED 只显示表情。模式从 USB 遥测的 `mode` 或 ROS2 `/robot/mode` 查看。不接电脑、按 README 供电也可使用。
 5. 使用 ROS2 前关闭 Thonny，释放串口。ROS2 不会自动上传固件。
 
 USB 使用 MicroPython 的 `sys.stdin/sys.stdout`（REPL 同一串口）。仅适用于该固件
@@ -30,7 +30,7 @@ USB 使用 MicroPython 的 `sys.stdin/sys.stdout`（REPL 同一串口）。仅�
 Thonny 和 ROS2 桥接。程序保留 Ctrl+C 中断能力；上传更新前先停止 ROS2，再用
 Thonny 的停止按钮中断。如果 `main.py` 自动启动，连接后先停止，再修改文件。
 
-如果上电回中后没有 `LOCAL`，先检查屏幕/传感器连接和报错，不要直接切 ROS2。
+如果上电后没有正常表情或独立互动，先检查屏幕/传感器连接和报错，不要直接切 ROS2。
 若该 MicroPython 固件没有可轮询的 USB REPL，需要改用其支持的串口驱动；
 不要在不核对空闲引脚的情况下增加 UART 接线。
 
@@ -118,10 +118,10 @@ ros2 topic echo /robot/sensors
 然后在另一终端切换：
 
 ```bash
-# 进入 ROS2 控制：屏幕先 WAIT 回中，再 ROS2
+# 进入 ROS2 控制：模式先 centering 回默认姿势，再 ros2；屏幕不显示模式字母
 ros2 service call /robot/set_ros2 std_srvs/srv/SetBool '{data: true}'
 
-# 回到独立互动：屏幕先 WAIT 回中，再 LOCAL
+# 回到独立互动：模式先 centering 回默认姿势，再 standalone
 ros2 service call /robot/set_ros2 std_srvs/srv/SetBool '{data: false}'
 ```
 
@@ -200,4 +200,4 @@ ROS_DOMAIN_ID=74 python3 tools/check_ros2.py --serial
 
 检查两个独立 ROS2 进程的传感器、动作、切换服务、触摸优先和决策停止后回退。
 另有模式状态机测试覆盖回中等待、计数回绕、无效命令不续期和输入长度限制。
-本次开发没有连接 ESP32：USB 固件兼容、OLED、供电和机械动作仍需实物验证。
+早期 ROS2 开发使用协议模拟。2026-10-18 已在 ESP32 上验证正式固件的 USB 命令、重启、动作指令及回到独立互动，见 [实物记录](实物运行_2026-10-18.md)。这不等于本次重新完成了真实 ROS2 DDS 全链路或离线供电验证。

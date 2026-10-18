@@ -75,11 +75,11 @@ class RemoteTests(unittest.TestCase):
         import behavior
         import config
         expected = {
-            ('normal', config.CENTER_NS, config.CENTER_NS): 'idle',
-            ('touched', config.CENTER_NS, config.TILT_DOWN_NS): 'bow',
-            ('near', config.PAN_LEFT_NS, config.CENTER_NS): 'look_left',
-            ('near', config.PAN_RIGHT_NS, config.CENTER_NS): 'look_right',
-            ('near', config.CENTER_NS, config.CENTER_NS): 'look_center',
+            ('normal', config.PAN_HOME_NS, config.TILT_HOME_NS): 'idle',
+            ('touched', config.PAN_HOME_NS, config.TILT_DOWN_NS): 'bow',
+            ('near', config.PAN_LEFT_NS, config.TILT_NEAR_NS): 'look_left',
+            ('near', config.PAN_RIGHT_NS, config.TILT_NEAR_NS): 'look_right',
+            ('near', config.PAN_HOME_NS, config.TILT_NEAR_NS): 'look_center',
         }
         for touch, left, right in itertools.product((False, True), repeat=3):
             action = core.Policy().choose(touch, left, right, 0, 0.4)
