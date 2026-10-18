@@ -1,203 +1,178 @@
-# ROS2 无按钮双模式：运行与演示
+# ROS2 运行与源码说明
 
-## 系统和学习目标
+项目主页展示整体架构和快速演示；本文解释启动入口、节点接口、控制时序与排错。现场讲解可以按 [演示流程](ros2_demo.md) 操作，硬件下载见 [硬件指南](hardware.md)。
 
-ESP32-C3 运行 MicroPython，负责输入消抖、舵机 PWM、限幅和平滑运动、OLED。
-Ubuntu 24.04 + ROS2 Jazzy 运行两个 Python 节点：
+## 1. 环境与构建
 
-```text
-触摸/左右红外 → ESP32 → USB JSON 行 → hardware_bridge
-                                     ↓ /robot/sensors
-                               behavior_controller
-                                     ↓ /robot/action
-舵机/OLED ← ESP32 ← USB JSON 行 ← hardware_bridge
-```
+开发环境为 Ubuntu 24.04、ROS2 Jazzy、Python 3。电脑运行 `rclpy` 节点，ESP32 运行 MicroPython；设备通过 USB JSON 行协议接入。
 
-这是基于规则的具身交互原型，没有模型训练、人脸识别、导航或关节角度反馈。
-SG90 的指令脉宽不是测量角度。模拟模式仅验证消息链路，不模拟机械运动。
-
-## 1. 更新开发板（只需首次或改固件时）
-
-1. 先卸下头壳或确认动作空间，断电改线；原有接线不变，无需按钮。
-2. 用 Thonny 把 `firmware/` 中全部 **9 个 .py 文件**上传到开发板根目录。
-3. `config.py` 默认 `MODE = "standalone"`。第一次空载检查可先用 `"demo"`；
-   确认方向后再改回 `"standalone"`。`"interaction"` 是独立互动的兼容名称。
-4. 重启后默认独立互动；OLED 只显示表情。模式从 USB 遥测的 `mode` 或 ROS2 `/robot/mode` 查看。不接电脑、按 README 供电也可使用。
-5. 使用 ROS2 前关闭 Thonny，释放串口。ROS2 不会自动上传固件。
-
-USB 使用 MicroPython 的 `sys.stdin/sys.stdout`（REPL 同一串口）。仅适用于该固件
-将 REPL 暴露在当前 USB 串口的配置，实际板型仍需验证。不要同时打开串口监视器、
-Thonny 和 ROS2 桥接。程序保留 Ctrl+C 中断能力；上传更新前先停止 ROS2，再用
-Thonny 的停止按钮中断。如果 `main.py` 自动启动，连接后先停止，再修改文件。
-
-如果上电后没有正常表情或独立互动，先检查屏幕/传感器连接和报错，不要直接切 ROS2。
-若该 MicroPython 固件没有可轮询的 USB REPL，需要改用其支持的串口驱动；
-不要在不核对空闲引脚的情况下增加 UART 接线。
-
-## 2. 构建电脑端 ROS2 功能包
-
-在项目根目录打开终端。以下命令中 `$PWD` 表示当前项目目录：
+在仓库根目录：
 
 ```bash
 source /opt/ros/jazzy/setup.bash
 cd ros2_ws
-colcon build --symlink-install
-source install/setup.bash
+colcon build --symlink-install --packages-select cardboard_robot
+cd ..
+source tools/ros2_env.bash
 ```
 
-依赖：`rclpy`、`std_msgs`、`std_srvs`、`launch_ros`、`python3-serial`、colcon。
-如果缺少依赖，Ubuntu 中安装对应 Jazzy 包和 `python3-serial`。
-当前开发电脑已具备这些依赖。
+每个终端先进入同一仓库，再 `source tools/ros2_env.bash`。该脚本加载已安装工作空间、移除旧的 `ROS_LOCALHOST_ONLY`，使用 `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` 和默认通信域 74，仅影响当前终端。
 
-后面每个新终端都先执行下面两行（路径按实际克隆位置调整）：
+需要与另一个本机项目分开时，可以在所有相关终端先设置相同的 `CARDBOARD_ROS_DOMAIN_ID`，再 source。通信域用于发现分组，不是安全隔离或权限控制。学习默认仅在本机发现；跨电脑通信需要另外配置。
 
-```bash
-source /opt/ros/jazzy/setup.bash
-source ~/桌面/纸壳机器人/cardboard-robot/ros2_ws/install/setup.bash
-```
+## 2. 三个启动入口
 
-## 3. 没接机器人，也能先学 ROS2
-
-终端 A 启动协议模拟：
+先停止旧的一组节点，再执行新的启动命令。同一通信域中不要同时启动模拟与实物入口。
 
 ```bash
+# 模拟：只启动软件链路，不打开真实串口。
+ros2 launch cardboard_robot sim.launch.py
+
+# 实物：串口按实际设备选择。
+ros2 launch cardboard_robot hardware.launch.py port:=/dev/ttyACM0
+
+# 兼容旧命令的统一入口，默认 simulate=false。
 ros2 launch cardboard_robot robot.launch.py simulate:=true
 ```
 
-终端 B 请求 ROS2 接管：
+`sim.launch.py` 和 `hardware.launch.py` 使用 `IncludeLaunchDescription` 复用 `robot.launch.py`。统一入口使用 `DeclareLaunchArgument` 声明配置、`LaunchConfiguration` 获取值，再通过 `Node(parameters=...)` 传给节点。
+
+```bash
+ros2 launch cardboard_robot sim.launch.py --show-args
+ros2 launch cardboard_robot sim.launch.py sim_left:=true return_delay_ms:=800 log_level:=info
+```
+
+`ParameterValue` 显式转换布尔值和整数。单独传入的串口路径保持字符串，支持含空格的文件系统路径。日志级别传给 ROS 日志系统。
+
+### 启动参数与节点参数
+
+| 配置 | 启动参数 | 节点参数 | 运行时修改 |
+| --- | --- | --- | --- |
+| 模拟 / 实物 | `simulate`；专用入口固定选择 | `/hardware_bridge simulate` | 修改后需重新启动 |
+| 串口 | `port`、`baud` | `/hardware_bridge port/baud` | 需重新启动 |
+| 模拟输入 | `sim_left/right/touch` | `/hardware_bridge sim_left/right/touch` | 支持 |
+| 返回等待 | `return_delay_ms` | `/behavior_controller return_delay_ms` | 支持 |
+| 输入过期 | `sensor_timeout_ms` | `/behavior_controller sensor_timeout_ms` | 支持 |
+| 日志级别 | `log_level` | ROS 日志配置 | 本项目不提供此项的动态节点参数 |
+
+`ros2 param set` 能改变某个已声明值，不代表业务代码一定立即重新配置资源。串口与模拟选择在节点启动时读取，因此修改它们仍需重新启动。返回等待与模拟输入在定时器循环中读取，可以立即用于后续决策。
+
+## 3. 节点与话题
+
+### hardware_bridge
+
+- 读取串口，或生成模拟输入；校验收到的快照。
+- 发布 `/robot/sensors` 及单独的触摸、左右红外话题。
+- 订阅 `/robot/action`，把动作编码为 USB 命令。
+- 提供 `/robot/set_ros2` 服务，发布模式和连接状态。
+- 每约 100ms 执行一次，检查传感器和动作的新鲜度。
+
+### behavior_controller
+
+- 订阅同次采样的 `/robot/sensors` 完整快照。
+- 每约 50ms 根据规则发布 `/robot/action`。
+- 触摸优先；双红外选择 `look_center`；物体离开后等待 `return_delay_ms` 再返回。
+- 输入超过 `sensor_timeout_ms` 没有更新时停止发布动作，让桥接检测到过期并退出接管。
+
+| 话题 | 消息类型 | 内容 |
+| --- | --- | --- |
+| `/robot/sensors` | `std_msgs/msg/String` | JSON：`v/touch/left/right/mode`；实物可带 raw 和脉宽字段 |
+| `/robot/touch` | `std_msgs/msg/Bool` | 是否触摸 |
+| `/robot/ir/left`、`/robot/ir/right` | `std_msgs/msg/Bool` | 是否检测到物体，不是距离 |
+| `/robot/action` | `std_msgs/msg/String` | `idle/look_left/look_right/look_center/bow` |
+| `/robot/mode` | `std_msgs/msg/String` | `standalone/centering/ros2/disconnected` |
+| `/robot/connected` | `std_msgs/msg/Bool` | 最近 0.5 秒内是否收到有效数据 |
+
+话题使用深度 1 的默认可靠、易失 QoS，意图是及时处理最新状态。模式持续发布，正常情况下新订阅者也会收到后续样本；没有输出时应检查节点、通信域和发现设置，不要直接认定“只发布了一次”。
+
+```bash
+ros2 node info /hardware_bridge
+ros2 topic info /robot/sensors --verbose
+ros2 topic echo /robot/sensors std_msgs/msg/String --once
+ros2 topic hz /robot/action
+```
+
+## 4. 服务与模式切换
 
 ```bash
 ros2 service call /robot/set_ros2 std_srvs/srv/SetBool '{data: true}'
+ros2 topic echo /robot/mode std_msgs/msg/String --once
 ```
 
-成功应答代表已接受请求；看 `/robot/mode` 确认状态，而不是仅看服务结果。
+请求 `true` 表示接管，`false` 表示退出。服务成功只代表请求被接受；以模式话题确认。
 
-```bash
-ros2 topic echo /robot/mode
+实物状态机：
+
+```text
+standalone -> centering -> ros2
+ros2 -> centering -> standalone
 ```
 
-终端 C 模拟手出现在左侧，然后模拟摸头：
+`centering` 期间先回默认姿势，动作指令到位后交接。协议模拟器只切换协议状态，不计算机械运动时间，因此可直接看到 `ros2` 或 `standalone`。这个状态机是应用逻辑，不是 ROS2 Lifecycle 节点。
+
+接管要求桥接有新鲜的传感器与决策数据；不满足会返回失败原因。桥接约 0.5 秒收不到新鲜输入/动作时取消接管；固件约 1 秒收不到有效命令时也会退出。重新连接或决策恢复后需重新请求接管。
+
+## 5. 模拟输入与动态参数
 
 ```bash
 ros2 param set /hardware_bridge sim_left true
 ros2 param set /hardware_bridge sim_touch true
+ros2 topic echo /robot/action std_msgs/msg/String --once
 ```
 
-桥接日志依次显示 `SIM action: look_left`、`SIM action: bow`。
-取消触摸后会回到左转；两个输入都取消，约 0.4 秒后回中：
+左输入存在时输出 `look_left`；再加入触摸后应输出 `bow`。参数更新与消息传播是异步的，偶尔读到更新前的样本时，稍后再读取。
 
 ```bash
 ros2 param set /hardware_bridge sim_touch false
 ros2 param set /hardware_bridge sim_left false
+ros2 param set /behavior_controller return_delay_ms 1000
+ros2 param get /behavior_controller return_delay_ms
 ```
 
-模拟模式不连接 ESP32，也不会让真实舵机移动。停止模拟后才能启动真实连接；
-一次只运行一组桥接/决策节点。
+延时参数只改变 ROS2 决策模式的返回等待；ESP32 独立模式仍使用其 `firmware/config.py` 设置。模拟参数不会替换真实机器人上的传感器输入。
 
-## 4. 连接真实机器人并切换
+## 6. USB 协议与实物
 
-确认固件已更新、USB 连接、Thonny 已关闭，查看设备：
+先确认 ESP32 根目录保存全部 9 个正式文件，独立互动正常；关闭 Thonny并停止模拟后接入电脑。
 
 ```bash
 ls /dev/serial/by-id/
+ros2 launch cardboard_robot hardware.launch.py port:=/dev/ttyACM0
 ```
 
-优先使用稳定的 `/dev/serial/by-id/...` 路径；没有时按实际选择 `/dev/ttyACM0`
-或 `/dev/ttyUSB0`。下面的设备名是例子，不保证每台电脑一致：
+优先选稳定的 by-id 路径。串口权限不足时配置用户设备权限，不用 `sudo ros2` 绕过。GPIO 与供电见 [接线说明](wiring.md)。USB 接电脑时不同时从外部给 ESP32 USB 接口或供电排针再送电；舵机继续用原稳压电源并共地。
 
-```bash
-ros2 launch cardboard_robot robot.launch.py port:=/dev/ttyACM0
+设备上行是以 `@` 开头的 JSON 行；桥接发给设备的命令示例：
+
+```json
+{"v": 1, "mode": "ros2", "action": "look_left"}
 ```
 
-启动桥接本身仍为独立模式，不会自动接管。等待传感器数据：
+设备遥测中的触摸和左右状态必须是布尔值。解析器限制行长度，校验版本、模式和字段类型。桥接使用接收端单调时钟判断消息是否过期，不依赖两端系统时间同步。本版没有设备时间戳或序列号，不要把历史传感器日志回放到真实控制链路当作新输入。
 
-```bash
-ros2 topic echo /robot/sensors
-```
+ESP32 的 USB REPL 与运行通信共用串口，不能同时打开 Thonny、监视器和桥接。ROS2 不会上传固件；更新设备代码时先停止桥接，再用 Thonny 操作。Ctrl+C 正常关闭桥接会尽力发送退出命令，突然断开则由固件超时处理。
 
-然后在另一终端切换：
+## 7. 排查话题没有输出
 
-```bash
-# 进入 ROS2 控制：模式先 centering 回默认姿势，再 ros2；屏幕不显示模式字母
-ros2 service call /robot/set_ros2 std_srvs/srv/SetBool '{data: true}'
+1. 确认启动终端还在运行，且无启动异常。
+2. 各终端 source 同一个 `tools/ros2_env.bash`，确认 `echo "$ROS_DOMAIN_ID"` 一致。
+3. 用 `ros2 node list` 查看两个节点，再用 `ros2 topic list -t` 查看话题。
+4. 用明确类型读取：`ros2 topic echo /robot/mode std_msgs/msg/String --once`。
+5. 若新订阅者仍发现不到节点，停止这组模拟，用统一环境重新启动；不要同时保留旧的多组节点。
 
-# 回到独立互动：模式先 centering 回默认姿势，再 standalone
-ros2 service call /robot/set_ros2 std_srvs/srv/SetBool '{data: false}'
-```
+`ROS_LOCALHOST_ONLY` 在 Jazzy 中属于旧设置；本项目学习脚本使用新的发现范围设置。此前观测到原节点运行但新订阅者发现不到的现象，没有据此确认唯一根因。统一环境在独立通信域中的模拟集成检查已通过。
 
-没有新鲜的传感器数据或决策消息时，接管请求会被拒绝并说明原因。
-桥接端 0.5 秒没有新鲜输入/动作就取消接管；固件 1 秒没有有效命令也会
-退出 ROS2。退出先平滑回中，再恢复独立互动。这个回中过程可能约需 0.5 秒，
-实际受循环执行时间影响；回中判定基于指令值，并非真实角度测量。
-重新连接或决策恢复后需要再次显式请求接管，不会自动重入。
-Ctrl+C 停止桥接时会尽力发送退出命令；强制断开由开发板超时处理。
+## 8. 代码阅读与测试
 
-`/robot/connected` 表示近期是否收到有效开发板消息；USB 插着但程序未运行不算连接。
-串口权限不足时需由用户配置设备权限（通常是 dialout 组并重新登录），不要用
-`sudo ros2` 绕过，也不要在两个程序中同时打开串口。
-
-## 5. 话题、服务和参数
-
-| 接口 | 类型 | 用途 |
-| --- | --- | --- |
-| `/robot/sensors` | std_msgs/String | 同次采样的 JSON：v、touch、left、right、mode |
-| `/robot/touch` | std_msgs/Bool | 触摸状态 |
-| `/robot/ir/left`、`/robot/ir/right` | std_msgs/Bool | 红外有无检测，不是距离 |
-| `/robot/action` | std_msgs/String | idle/look_left/look_right/look_center/bow |
-| `/robot/mode` | std_msgs/String | standalone/centering/ros2；桥接失联时为 disconnected |
-| `/robot/connected` | std_msgs/Bool | 开发板消息是否新鲜 |
-| `/robot/set_ros2` | std_srvs/SetBool | true 请求接管，false 请求独立模式 |
-
-决策节点使用完整快照话题，避免左右状态分开到达造成同次采样混淆。
-使用接收端单调时钟检测新鲜度，无需电脑与 ESP32 时钟同步。v=1 是协议版本。
-本版没有设备时间戳与序列号；日志回放可用于观察和离线分析，不应连接真实桥接
-当作实时传感器源，否则旧记录会被视为新接收的数据。
-
-```bash
-ros2 node list
-ros2 topic echo /robot/action
-ros2 topic hz /robot/sensors
-ros2 param set /behavior_controller return_delay_ms 600
-rqt_graph
-```
-
-决策默认每 50ms 发布一次；传感器和桥接命令每 100ms 一次。
-`return_delay_ms` 控制目标消失后延迟回中，默认为 400。
-`sim_touch/sim_left/sim_right` 仅在模拟模式下生效。
-
-## 6. 对照源码学习
-
-1. `bridge.py`：Node、publisher/subscriber、SetBool 服务、串口、连接状态和超时。
-2. `behavior.py`：订阅回调保存快照，timer 周期决策，参数控制回中延迟。
-3. `core.py`：纯函数协议检查和行为规则；触摸优先，双红外同时触发朝中间。
-4. `robot.launch.py`：一条命令启动两个节点，传入设备或模拟参数。
-5. `firmware/remote.py`：有界串口解析、接管与回中状态机、命令超时。
-6. `firmware/app.py`：共享原有传感器和执行器，两种模式只改变动作来源。
-
-可以这样讲解演示：
-
-> 机器人默认由 ESP32 独立互动。ROS2 通过服务请求接管，桥接节点发布真实
-> 传感器快照，决策节点订阅后周期发布动作，再由桥接送给 ESP32 执行。
-> 两种模式共用底层驱动，切换先回中，通信超时会回到独立模式。
-> 这实现了基于规则的感知—决策—行动循环，未实现视觉学习或关节位置反馈。
-
-## 7. 检查与验证边界
-
-项目根目录运行普通 Python 检查：
+阅读顺序：`launch/robot.launch.py` → `bridge.py` → `behavior.py` → `core.py` → `firmware/remote.py`。先理解节点的输入输出，再看串口编码和状态交接。
 
 ```bash
 python3 tools/check_syntax.py
 python3 -m unittest discover -s tests -v
+source tools/ros2_env.bash
+ROS_DOMAIN_ID=84 python3 tools/check_launch.py
+ROS_DOMAIN_ID=85 python3 tools/check_ros2.py
+ROS_DOMAIN_ID=86 python3 tools/check_ros2.py --serial
 ```
 
-构建并 source ROS2 工作空间后，在无其他同名节点的环境运行真实 DDS 集成检查：
-
-```bash
-ROS_DOMAIN_ID=74 python3 tools/check_ros2.py
-# 用操作系统伪终端连接真实固件解析器/状态机，验证 pyserial 链路
-ROS_DOMAIN_ID=74 python3 tools/check_ros2.py --serial
-```
-
-检查两个独立 ROS2 进程的传感器、动作、切换服务、触摸优先和决策停止后回退。
-另有模式状态机测试覆盖回中等待、计数回绕、无效命令不续期和输入长度限制。
-早期 ROS2 开发使用协议模拟。2026-10-18 已在 ESP32 上验证正式固件的 USB 命令、重启、动作指令及回到独立互动，见 [实物记录](实物运行_2026-10-18.md)。这不等于本次重新完成了真实 ROS2 DDS 全链路或离线供电验证。
+最后三项运行真实 ROS2 进程并自动清理测试节点。`check_launch.py` 验证启动入口、参数与互动流程；`check_ros2.py` 验证模式及停止决策后的回退；`--serial` 用伪终端串口运行固件解析器和模式状态机，不操作真实 GPIO、OLED 或舵机。结果应与真实硬件验证分别记录。

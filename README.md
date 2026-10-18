@@ -1,163 +1,210 @@
-# 小纸壳机器人 · Cardboard Robot
+# 小纸壳机器人：ROS2 感知与控制学习项目
 
-用 **ESP32-C3 SuperMini + MicroPython** 控制 OLED 表情、两块红外、触摸模块和两只 SG90 舵机。程序保存在开发板后，上电就能独立互动；日常使用不需要电脑、Thonny、Wi-Fi 或 ROS2。
+用一台可以摸头、转头和显示表情的纸壳机器人，实践 **ROS2 Jazzy 的节点通信、话题订阅发布、服务调用、参数配置、Launch 启动和硬件桥接**。项目将传感器接入、行为决策和底层执行分开，便于观察“输入如何变成动作”的完整过程。
 
-这是可以阅读、修改的 Python 源码项目。MicroPython 固件相当于开发板的 Python 运行环境；本项目的 9 个 `.py` 文件才是机器人程序。已装好 MicroPython 的板子更新功能时，直接更新这些文件，**不用重新擦除 Flash 或刷 `.bin`**。
+电脑端使用 Python / `rclpy`，ESP32-C3 使用 MicroPython。通过同一套 ROS2 节点，可以先进行无硬件的协议模拟，再连接真实机器人。机器人也保留不依赖电脑的独立互动模式。
 
-## 现在能实现什么
+## 这个项目展示哪些 ROS2 知识
 
-左右均按**面对机器人屏幕**的方向定义，实际方向取决于舵机安装。
-
-| 操作 | 头部动作 | 屏幕 |
+| 知识点 | 项目里的实现 | 可以展示的证据 |
 | --- | --- | --- |
-| 上电 / 空闲 | 先抬头，再略向右，保持默认姿势 | 普通表情，约每 3 秒眨眼 |
-| 左红外检测到物体 | 向左转，同时比默认姿势再抬高一点 | 靠近表情 |
-| 右红外检测到物体 | 向右转，同时再抬高一点 | 靠近表情 |
-| 两边同时检测到物体 | 回默认左右朝向，同时抬高 | 靠近表情 |
-| 触摸头顶感应区 | 优先于红外，回默认左右朝向并低头 | 摸头表情 |
-| 松开触摸 | 继续保留约 1 秒反馈，然后按红外状态或空闲状态动作 | 随动作恢复 |
-| 移开红外前物体 | 等约 0.4 秒，平滑返回默认姿势 | 普通表情 |
+| 节点与职责划分 | `hardware_bridge` 接入设备，`behavior_controller` 负责决策 | `ros2 node list`、`ros2 node info` |
+| Publisher / Subscriber | 发布传感器快照、订阅动作；订阅快照、发布决策 | `/robot/sensors`、`/robot/action`、`rqt_graph` |
+| Service | 用 `std_srvs/SetBool` 请求接管或退出 ROS2 控制 | `/robot/set_ros2` 的请求与响应 |
+| Parameters | 模拟左右红外与触摸，运行时修改返回等待时间 | `ros2 param list/get/set` |
+| Timer | 桥接约 10Hz，决策约 20Hz | `create_timer`、`ros2 topic hz` |
+| Launch | 模拟和实物入口复用同一套节点配置，明确参数类型 | `sim.launch.py`、`hardware.launch.py` |
+| DDS 节点发现 | 各终端统一本机发现范围与通信域 | `tools/ros2_env.bash` |
+| 状态与异常处理 | 接管先回默认姿势；消息过期后回到独立模式 | `/robot/mode`、集成测试日志 |
+| ROS2 工程组织 | `ament_python` 包、colcon 构建、入口安装与检查 | `package.xml`、`setup.py`、`tools/check_launch.py` |
 
-屏幕**只显示表情**，没有 `LOCAL`、`ROS2`、`WAIT` 或 `L/R/T` 调试字母。输入电平和模式信息仍通过 USB 串口回传，方便以后排查。
+## 系统结构
 
-## 接线总表
-
-主控为 ESP32-C3 SuperMini，GPIO 以板上的数字标记为准。`GPIO5` 是信号针，**不是 5V 电源**。
-
-| 模块 | 模块上的针 / 线 | 接到哪里 |
-| --- | --- | --- |
-| OLED 128×64，SSD1306，地址 0x3C | SDA | ESP32 `0` |
-| OLED | SCL | ESP32 `1` |
-| OLED | VCC | 电源模块 **3.3V** |
-| 触摸 TTP223 | OUT / SIG / I/O | ESP32 `10` |
-| 触摸 TTP223 | VCC | 电源模块 **3.3V** |
-| 左红外 | OUT | ESP32 `4` |
-| 右红外 | OUT | ESP32 `3` |
-| 两块红外 | VCC | 电源模块 **3.3V** |
-| 左右转头舵机 | 橙 / 黄信号线 | ESP32 `5` |
-| 俯仰舵机 | 橙 / 黄信号线 | ESP32 `6` |
-| 两只舵机 | 红线 | 电源模块 **稳压 5V** |
-| 两只舵机 | 棕 / 黑线 | 公共 **GND** |
-| OLED、触摸、两块红外 | GND | 公共 **GND** |
-| ESP32 | G | 同一公共 **GND** |
-
-外部电源模块 GND 也连接公共 GND。触摸已按“未触摸 0、触摸 1”配置；红外按“检测到 0、无物体 1”配置。
-
-当前供电方案：ESP32 **只从 USB 插口取电**；其 `5V`、`3.3V` 排针不接外部电源输出。舵机从电源模块取 5V，屏幕和传感器从电源模块取 3.3V。电源模块若使用 12V 输入，只能把它接到兼容的模块输入；**VIN / 12V 不能接到 ESP32、屏幕、传感器或舵机**。颜色不能替代电压标记。
-
-改线、粘接和装舵盘前，先扶住头，拔外接电源，再拔 USB。详细安装见 [接线与装机](docs/wiring.md)。
-
-## 把代码下载到开发板：Thonny
-
-如果已经由助手上传并校验了当前版本，就不用重复下载；需要更新或换板时按下面做。
-
-1. 下载本仓库：GitHub 页面点 **Code → Download ZIP**，解压后找到 `firmware` 文件夹。也可使用电脑上已有的最新项目。
-2. 用 **USB 数据线**连接 ESP32 和电脑，打开 Thonny。在解释器设置选择 **MicroPython (ESP32)**，串口选择实际 ESP32 设备；Linux 常见 `/dev/ttyACM0`，插拔后名称可能变化。
-3. 扶住头部，点 Thonny 红色停止按钮。停止会释放舵机，不等于回中。已有 MicroPython 的板子不要再点擦除或安装固件。
-4. 打开 **视图 → 文件**，在电脑文件区进入 `firmware/`。先上传下面 8 个依赖文件到 **MicroPython 设备根目录**，最后再上传 `main.py`。可在文件上右键选择上传，也可逐个打开后用 **文件 → 另存为 → MicroPython 设备**，保持原文件名。
-5. 设备根目录应包含以下 **全部 9 个文件**，不要在设备中再套一层 `firmware` 文件夹：
-
-   ```text
-   /
-   ├── app.py
-   ├── behavior.py
-   ├── config.py
-   ├── faces.py
-   ├── remote.py
-   ├── sensors.py
-   ├── servo.py
-   ├── ssd1306.py
-   └── main.py
-   ```
-
-6. 确认设备里的 `config.py` 为 `MODE = "standalone"`。默认已经如此，不需要改成 `demo`。
-7. 检查纸壳、线和舵机活动空间，先给电源模块通电，让屏幕/传感器有电，再按 ESP32 **RST** 重新启动程序。Thonny 不要同时执行另一份旧测试脚本。
-8. 检查普通表情、左右感应、触摸和松手恢复。出现报错先停止排查，不能只靠复制 `main.py` 解决缺失模块。
-
-**F5 临时运行电脑里的文件，不等于把整套程序保存到了芯片。** 要断开电脑自动启动，必须把上述 9 个文件实际保存到设备，入口文件名必须是 `main.py`。保留板子原有 `boot.py` 即可，不需要用本仓库覆盖它。
-
-新板没有 MicroPython 时，再从 [官方 ESP32-C3 下载页](https://micropython.org/download/ESP32_GENERIC_C3/) 获取固件并安装。本项目实物使用 MicroPython v1.29.0；仓库不包含固件二进制。
-
-## 不连接电脑，怎么运行
-
-**不连接电脑仍然要供电。** 沿用当前接线，最直接的方法是将 ESP32 的 USB 线从电脑改接到 **5V USB 充电头或充电宝**。
-
-```text
-5V USB 充电头 / 充电宝 ──USB线── ESP32 USB插口
-
-原配兼容适配器 ── 电源模块 ── 5V：两只舵机
-                         └── 3.3V：OLED、触摸、两块红外
-
-ESP32 G、所有模块 GND、电源模块 GND：保持共地
+```mermaid
+flowchart LR
+    ESP[ESP32-C3<br/>传感器、PWM、OLED] <-->|USB JSON 行协议| Bridge[hardware_bridge]
+    Sim[模拟输入与协议状态] <-->|simulate=true| Bridge
+    Bridge -->|/robot/sensors| Policy[behavior_controller]
+    Policy -->|/robot/action| Bridge
+    CLI[ROS2 CLI / 展示终端] -->|/robot/set_ros2 服务| Bridge
+    Bridge -->|/robot/mode、/robot/connected| CLI
 ```
 
-1. 扶住头部，先拔外接电源，再拔电脑上的 USB。
-2. 将 USB 线的电脑端接到 **5V USB 充电头或充电宝**，先不要给它通电。ESP32 这一端仍插在开发板 USB 口。
-3. 先给原来的电源模块通电，再给 USB 充电头通电或开启充电宝。模块先有电，可以避免程序启动时找不到 OLED。
-4. `main.py` 会自动执行，先抬头并略向右，随后独立互动；不需要再打开软件或按 F5。
-5. 手先离开触摸区约 2 秒，让触摸模块完成上电校准，然后测试左右红外和触摸。
+- **桥接节点**把设备数据转换成 ROS2 消息，并把 ROS2 动作转换为 USB 命令；真实串口和模拟器由启动参数选择。
+- **决策节点**处理“触摸优先、左侧检测转左、右侧检测转右、物体离开延时返回”的规则，不直接操作串口和 GPIO。
+- **ESP32**负责输入消抖、平滑 PWM、舵机限幅和 OLED。它通过 USB 协议接入，板上运行的是 MicroPython 程序，不是 ROS2 节点。
+- **模拟模式**生成布尔输入并验证消息/控制流程，不包含 3D 模型或舵机动力学。
 
-ESP32 的 USB 充电头只负责主控；**不能拔掉舵机/传感器电源后只留 ESP32 USB**。有些充电宝会因主控耗电小而自动关闭，遇到这种情况优先换稳定的 5V USB 电源。完全拔掉全部电源后，机器人不会继续运行。
+## 两种控制模式
 
-这套接法不需要给开发板 `5V` 排针加线，也不需要重新刷固件。[更多供电与排错](docs/wiring.md)。
-
-## 调整姿势和速度
-
-参数都在 `firmware/config.py`，更新后要把该文件重新保存到设备并重启。
-
-| 参数 / 目标 | 当前值 | 含义 |
+| 模式 | 决策在哪里运行 | 用途 |
 | --- | --- | --- |
-| `PAN_HOME_OFFSET_NS` | 60000 | 默认朝右偏移量 |
-| `TILT_HOME_LIFT_NS` | 100000 | 默认抬头偏移量 |
-| `TILT_NEAR_EXTRA_NS` | 20000 | 红外感应时比默认姿势再抬头的偏移量 |
-| 默认水平 / 俯仰指令 | 1560000 / 1600000 ns | 上电和空闲姿势 |
-| 左转 / 右转指令 | 1200000 / 1800000 ns | 左右感应转头目标 |
-| 感应抬头 / 触摸低头指令 | 1620000 / 1400000 ns | 俯仰目标 |
-| `STEP_NS` / `STEP_INTERVAL_MS` | 4000 ns / 20 ms | 平滑步进上限与间隔 |
-| `RAMP_STEP_NS` | 1000 | 起步增量，减少突然加速 |
-| `INPUT_STABLE_MS` | 60 | 输入消抖时间 |
-| `TOUCH_HOLD_MS` | 1000 | 松手后保留摸头反馈的时间 |
+| `standalone` | ESP32 | 上电默认独立互动；ROS2 可读取传感器 |
+| `ros2` | 电脑上的 `behavior_controller` | 展示 ROS2 感知、决策、执行链路 |
 
-这些是 **PWM 脉宽，不是角度**。`PAN_DIRECTION = 1`、`TILT_DIRECTION = -1` 是这台实物现有配置，换安装方向要重新核对。不要直接照搬到另一台装好的机器人并扩大范围。
+启动 ROS2 节点不会自动接管。调用服务后，实物先经过 `centering` 回默认姿势，再进入目标模式。服务返回 `success=True` 表示请求被接受，**以 `/robot/mode` 确认实际模式**。协议模拟不计算机械运动时间，因此可能直接看到目标模式。
 
-程序会持续输出 PWM 保持姿势；SG90 没有角度反馈，软件不知道真实位置或是否卡住。首次启动从未知实际位置到默认位置可能较快。若出现“咔吧”声、连续异响、发热或突然掉头，先断电检查固定、齿轮、供电和活动间隙，不能靠继续加大脉宽修复。
+桥接检测到传感器或动作消息超过约 0.5 秒未更新，会取消接管；ESP32 约 1 秒收不到有效命令时也会回退。重新连接后需要再次请求接管。
 
-## 代码从哪里读起
+## 快速开始：先用模拟模式学习
 
-```text
-firmware/          上传到开发板的正式程序，全部 9 个 .py 文件
-  main.py          开机入口
-  config.py        接线、默认姿势、动作范围、速度
-  app.py           启动、互动、眨眼、USB 模式切换、退出清理
-  sensors.py       输入电平与消抖
-  behavior.py      触摸优先、红外决定目标、松手反馈保持
-  servo.py         50Hz PWM 与平滑动作
-  faces.py         表情绘制
-  remote.py        USB 协议；日常独立运行也需要保留此文件
-  ssd1306.py       OLED 驱动
-examples/          历史独立实验；参数独立，不会自动跟随 config.py
-ros2_ws/           可选电脑端 ROS2 项目，日常独立互动不需要启动
-tests/             电脑逻辑测试
-tools/             语法检查与开发工具
-docs/              接线、测试、ROS2 和实物记录
-```
+环境：Ubuntu 24.04、ROS2 Jazzy、Python 3。依赖包括 `rclpy`、`std_msgs`、`std_srvs`、`launch_ros`、`python3-serial` 和 colcon。
 
-建议按 `config.py → sensors.py → behavior.py → servo.py → faces.py → app.py → main.py` 阅读。普通电脑 Python 没有 `machine`、`framebuf` 等 MicroPython 模块，正式程序应在 ESP32 上执行。
-
-## 测试与实物验证
-
-电脑端 Python 3，无第三方依赖：
+在**本项目根目录**打开终端，首次使用或修改 Launch 后构建：
 
 ```bash
-python3 tools/check_syntax.py
-python3 -m unittest discover -s tests -v
+source /opt/ros/jazzy/setup.bash
+cd ros2_ws
+colcon build --symlink-install --packages-select cardboard_robot
+cd ..
+source tools/ros2_env.bash
 ```
 
-GitHub Actions 也会执行以上检查。测试覆盖触摸优先、短触摸反馈、消抖、左右转头同时抬头、延时恢复、PWM 限幅和模式切换；不代替机械、供电或离线启动验收。
+`tools/ros2_env.bash` 加载工作空间，使用 Jazzy 的本机发现设置和通信域 74，不修改 `.bashrc`。**每个新终端都先进入本项目根目录，再 source 该文件**。同一通信域只运行一组本项目节点；切换启动方式前停止上一组。
 
-实物验证状态与边界见 [2026-10-18 实物记录](docs/实物运行_2026-10-18.md)。
+### 1. 终端 A：启动两个模拟节点
 
-- [模块测试顺序](docs/testing.md)
-- [可选 ROS2 控制](docs/ros2.md)
-- [GitHub 上传说明](docs/github.md)
-- [第三方代码说明](THIRD_PARTY_NOTICES.md)
+```bash
+source tools/ros2_env.bash
+ros2 launch cardboard_robot sim.launch.py
+```
+
+保持终端运行。模拟模式不需要连接 ESP32。
+
+### 2. 终端 B：观察节点、消息与初始状态
+
+```bash
+source tools/ros2_env.bash
+ros2 node list
+ros2 topic list -t
+ros2 topic echo /robot/mode std_msgs/msg/String --once
+```
+
+应看到 `/hardware_bridge`、`/behavior_controller`，模式初始为 `standalone`。
+
+### 3. 请求 ROS2 接管
+
+```bash
+ros2 service call /robot/set_ros2 std_srvs/srv/SetBool '{data: true}'
+ros2 topic echo /robot/mode std_msgs/msg/String --once
+```
+
+预期模式为 `ros2`。
+
+### 4. 模拟感知，观察决策
+
+```bash
+# 模拟左边出现物体，动作应变成 look_left。
+ros2 param set /hardware_bridge sim_left true
+ros2 topic echo /robot/action std_msgs/msg/String --once
+
+# 保留左侧物体，再模拟摸头，观察触摸优先：动作变成 bow。
+ros2 param set /hardware_bridge sim_touch true
+ros2 topic echo /robot/action std_msgs/msg/String --once
+
+# 撤销模拟输入。
+ros2 param set /hardware_bridge sim_touch false
+ros2 param set /hardware_bridge sim_left false
+```
+
+`ros2 topic echo /robot/action` 可持续观察动作，结束查看按 Ctrl+C。参数设置请求成功后，决策要经过下一次定时器更新；单次读取若恰好看到旧值，再读一次。
+
+### 5. 演示参数与模式切换
+
+```bash
+ros2 param get /behavior_controller return_delay_ms
+ros2 param set /behavior_controller return_delay_ms 1000
+ros2 service call /robot/set_ros2 std_srvs/srv/SetBool '{data: false}'
+ros2 topic echo /robot/mode std_msgs/msg/String --once
+```
+
+返回等待时间改为 1 秒，无需重启节点；退出后模式为 `standalone`。
+
+完整的展示顺序和讲解词见 [ROS2 演示与讲解](docs/ros2_demo.md)。
+
+## Launch 文件与参数
+
+| 文件 | 作用 | 示例 |
+| --- | --- | --- |
+| `sim.launch.py` | 固定使用模拟输入 | `ros2 launch cardboard_robot sim.launch.py` |
+| `hardware.launch.py` | 固定使用真实串口 | `ros2 launch cardboard_robot hardware.launch.py port:=/dev/ttyACM0` |
+| `robot.launch.py` | 两个入口复用的统一启动文件，也保留原命令兼容 | `ros2 launch cardboard_robot robot.launch.py simulate:=true` |
+
+```bash
+# 查看可配置参数。
+ros2 launch cardboard_robot sim.launch.py --show-args
+
+# 演示启动时传参：一开始就检测到左侧物体，返回等待时间 800ms。
+ros2 launch cardboard_robot sim.launch.py sim_left:=true return_delay_ms:=800
+```
+
+| 参数 | 默认值 | 用途 |
+| --- | --- | --- |
+| `simulate` | `false` | 统一入口选择模拟或实物；两个专用入口分别固定此值 |
+| `port`、`baud` | `/dev/ttyACM0`、`115200` | 实物串口与波特率 |
+| `sim_left/right/touch` | 均为 `false` | 模拟输入，支持运行时 `ros2 param set` |
+| `return_delay_ms` | `400` | 决策节点在物体消失后保持方向的时间，支持运行时修改 |
+| `sensor_timeout_ms` | `500` | 决策节点允许的传感器消息最大间隔，支持运行时修改 |
+| `log_level` | `info` | 启动时选择两个节点的日志级别 |
+
+Launch 参数是启动配置；节点参数是运行配置。启动文件使用 `ParameterValue` 将文本转换为 `bool/int`，通过 `Node(parameters=...)` 传入节点。运行中改变串口或模拟/实物选择，需要重新启动；`log_level` 使用 ROS 日志参数，不是本项目的动态节点参数。
+
+## 接入真实机器人
+
+ESP32 已保存正式程序、独立互动正常后，关闭 Thonny，停止旧模拟，使用 USB 数据线连接电脑。ROS2 控制时，ESP32 的 USB 供电/数据端接电脑，不同时接外部 USB 电源；舵机和传感器继续用原模块电源，共地。
+
+```bash
+source tools/ros2_env.bash
+ls /dev/serial/by-id/
+ros2 launch cardboard_robot hardware.launch.py port:=/dev/ttyACM0
+```
+
+串口按实际设备选择，优先使用 `/dev/serial/by-id/...` 的稳定路径。在另一终端等待 `/robot/sensors` 有消息，再通过服务请求接管。不要让 Thonny、串口监视器和桥接同时占用串口。
+
+真实硬件、下载和供电步骤保留在 [硬件使用指南](docs/hardware.md)；接线见 [接线与装机](docs/wiring.md)。本次 README / Launch 调整不需要重新刷 ESP32 的 9 个 Python 文件。
+
+## 主要 ROS2 接口
+
+| 接口 | 类型 | 发布者 / 提供者 | 作用 |
+| --- | --- | --- | --- |
+| `/robot/sensors` | `std_msgs/msg/String` | 桥接 | 同次采样的 JSON 快照 |
+| `/robot/touch`、`/robot/ir/left`、`/robot/ir/right` | `std_msgs/msg/Bool` | 桥接 | 便于单独观察输入 |
+| `/robot/action` | `std_msgs/msg/String` | 决策 | `idle/look_left/look_right/look_center/bow` |
+| `/robot/mode` | `std_msgs/msg/String` | 桥接 | `standalone/centering/ros2/disconnected` |
+| `/robot/connected` | `std_msgs/msg/Bool` | 桥接 | 近期是否收到设备或模拟数据 |
+| `/robot/set_ros2` | `std_srvs/srv/SetBool` | 桥接 | 请求接管或退出 |
+
+话题使用深度为 1 的队列，偏向处理最新状态。输入是有无检测的布尔值；SG90 的指令脉宽不等于真实测量角度。数据格式和行为时序见 [ROS2 使用与源码说明](docs/ros2.md)。
+
+## 项目组织与验证
+
+```text
+ros2_ws/src/cardboard_robot/
+  cardboard_robot/bridge.py       串口、话题、服务、通信状态
+  cardboard_robot/behavior.py     订阅快照、定时决策、动态参数
+  cardboard_robot/core.py         协议解析、规则、模拟器
+  launch/robot.launch.py         统一启动、参数类型、节点配置
+  launch/sim.launch.py           模拟学习入口
+  launch/hardware.launch.py      实物入口
+  package.xml / setup.py         ROS2 依赖、入口和 Launch 安装
+firmware/                       ESP32 MicroPython 正式程序
+examples/                       各模块历史学习代码
+tools/                          环境加载、语法及 ROS2 集成检查
+tests/                          不依赖 ROS2 的逻辑测试
+docs/                           演示、运行、硬件与实物记录
+```
+
+```bash
+# 纯 Python 检查；GitHub Actions 运行这两项。
+python3 tools/check_syntax.py
+python3 -m unittest discover -s tests -v
+
+# source 学习环境后，在独立通信域验证真实 ROS2 进程。
+ROS_DOMAIN_ID=84 python3 tools/check_launch.py
+ROS_DOMAIN_ID=85 python3 tools/check_ros2.py
+ROS_DOMAIN_ID=86 python3 tools/check_ros2.py --serial
+```
+
+Launch 检查覆盖安装入口、参数类型与传递、话题、服务和动态参数；另外两项分别检查模拟链路、伪终端串口与固件状态机，包括停止决策后退出接管。伪终端不是实际 ESP32。
+
+已完成的硬件测试及边界见 [实物记录](docs/实物运行_2026-10-18.md)。电脑测试和模拟通过不能替代实物机械、串口与供电验证。第三方驱动说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

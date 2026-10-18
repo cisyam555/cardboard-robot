@@ -10,7 +10,7 @@ setup(
     ],
     install_requires=["setuptools"], zip_safe=True,
     maintainer="cisyam555", maintainer_email="cisyam555@users.noreply.github.com",
-    description="ROS2 serial bridge and reactive controller", license="LicenseRef-Project",
+    description="ROS2 learning robot with topics, services and parameterized launch", license="LicenseRef-Project",
     entry_points={"console_scripts": [
         "hardware_bridge = cardboard_robot.bridge:main",
         "behavior_controller = cardboard_robot.behavior:main",
